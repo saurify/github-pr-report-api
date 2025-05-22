@@ -93,8 +93,13 @@ export function generateReport(pullRequests) {
     reviews.forEach(review => {
       if (!review.user || !review.user.login) return;
       const user = review.user.login;
-      if (!reviewerStats[user]) reviewerStats[user] = { approvals: 0, total: 0 };
-
+      if (!reviewerStats[user]) {
+        reviewerStats[user] = {
+          approvals: 0,
+          total: 0,
+          avatar_url: review.user.avatar_url || null,
+        };
+      }
       reviewerStats[user].total++;
       if (review.state === 'APPROVED') {
         reviewerStats[user].approvals++;
@@ -113,6 +118,7 @@ export function generateReport(pullRequests) {
       user,
       approvals: stats.approvals,
       reviews: stats.total,
+      avatar_url: stats.avatar_url
     }));
 
   return {

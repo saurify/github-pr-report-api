@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors'
 import dotenv from 'dotenv';
 import reportRoute from './routes/report.js';
 
@@ -6,6 +7,8 @@ dotenv.config();
 const token = process.env.GITHUB_TOKEN;
 console.log('Loaded token:', token?.slice(0, 5));
 const app = express();
+app.use(cors());
+
 const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
