@@ -26,8 +26,9 @@ router.get('/report', async (req, res) => {
     const report = generateReport(data);
     res.json(report);
   } catch (e) {
-    logError(e);
-    res.status(500).json({ error: 'Failed to fetch report' });
+    logError(e.message);
+    const statusCode = e.message.includes('not found') ? 404 : 500;
+    res.status(statusCode).json({ error: e.message });
   }
 });
 

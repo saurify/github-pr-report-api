@@ -1,3 +1,4 @@
+// services/github.js
 import axios from 'axios';
 import dayjs from 'dayjs';
 import dotenv from 'dotenv';
@@ -8,64 +9,70 @@ import isSameOrBefore from 'dayjs/plugin/isSameOrBefore.js';
 dayjs.extend(isSameOrAfter);
 dayjs.extend(isSameOrBefore);
 
-
 dotenv.config();
 const GITHUB_API = 'https://api.github.com';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
-if (!GITHUB_TOKEN) {
-    console.warn('[WARN] GITHUB_TOKEN not loaded. Check your .env file.');
-}
+// ... (Keep headers and validateDateRange as is) ...
 
 const headers = GITHUB_TOKEN
     ? { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', }
     : {};
 
-
-/**
- * Validate that the date range does not exceed 4 weeks.
- */
 function validateDateRange(from, to) {
+    // ... (Keep existing implementation) ...
     const diffDays = to.diff(from, 'day');
-    if (diffDays > 180) {
-        console.log(
-            `[DEBUG] Validating date range: from=${from.format('YYYY-MM-DD')}, to=${to.format('YYYY-MM-DD')}, diff=${to.diff(from, 'day')} days`
-        );
-
-        throw new Error('Date range too large. Maximum allowed is 10 weeks.');
-    }
+    if (diffDays > 180) throw new Error('Date range too large. Maximum allowed is 10 weeks.');
 }
 
 /**
- * Fetch PRs in a closed state updated within range.
- * Filter only merged PRs within date range.
+ * Fetch PRs (Open and Closed) updated within range.
+ * Filter Merged PRs (by merge date) and Open PRs (by creation date).
  */
-export async function fetchMergedPRs(owner, repo, from, to) {
-    logInfo(`Fetching merged PRs for ${owner}/${repo} from ${from.format('YYYY-MM-DD')} to ${to.format('YYYY-MM-DD')}`);
+export async function fetchPRs(owner, repo, from, to) {
+    logInfo(`Fetching PRs for ${owner}/${repo} from ${from.format('YYYY-MM-DD')} to ${to.format('YYYY-MM-DD')}`);
     validateDateRange(from, to);
 
-    const url = `${GITHUB_API}/repos/${owner}/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
+    // CHANGED: state=all to get both open and closed
+    const url = `${GITHUB_API}/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`;
+
     try {
         const response = await axios.get(url, { headers });
         const all = response.data;
 
-        const merged = all.filter(pr =>
-            pr.merged_at &&
-            dayjs(pr.merged_at).isSameOrAfter(from) &&
-            dayjs(pr.merged_at).isSameOrBefore(to)
-        );
+        const relevantPRs = all.filter(pr => {
+            const mergedAt = pr.merged_at ? dayjs(pr.merged_at) : null;
+            const createdAt = dayjs(pr.created_at);
+            const isMergedInRange = mergedAt && mergedAt.isSameOrAfter(from) && mergedAt.isSameOrBefore(to);
 
-        logInfo(`Found ${merged.length} merged PRs`);
-        return merged;
+            // We consider an Open PR relevant if it was created within the selected window
+            // OR if you want ALL currently open PRs regardless of creation, remove the date check below.
+            // For specific sprint reports, checking creation date is standard.
+            const isOpenInRange = pr.state === 'open' && createdAt.isSameOrAfter(from) && createdAt.isSameOrBefore(to);
+
+            return isMergedInRange || isOpenInRange;
+        });
+
+        logInfo(`Found ${relevantPRs.length} relevant PRs (Merged or Open)`);
+        return relevantPRs;
     } catch (error) {
-        logError('Error fetching PRs:', error.message);
-        throw error;
+        if (error.response) {
+            const status = error.response.status;
+            if (status === 404) {
+                throw new Error(`Repository "${owner}/${repo}" not found. Please check the URL or your permissions.`);
+            } else if (status === 403 || status === 429) {
+                throw new Error(`GitHub API Rate Limit exceeded. Please add a GITHUB_TOKEN to .env or wait.`);
+            } else if (status === 401) {
+                throw new Error(`Invalid GitHub Token. Please check your .env file.`);
+            }
+        }
+        throw new Error(error.message || "Failed to connect to GitHub");
     }
 }
-/**
- * Fetch all reviews for a single PR.
- */
+
+// ... (Keep fetchReviews as is) ...
 export async function fetchReviews(owner, repo, prNumber) {
+    // ... (Keep existing implementation) ...
     const url = `${GITHUB_API}/repos/${owner}/${repo}/pulls/${prNumber}/reviews`;
     try {
         const res = await axios.get(url, { headers });
@@ -80,10 +87,11 @@ export async function fetchReviews(owner, repo, prNumber) {
  * Fetch PRs with their reviews.
  */
 export async function fetchPRsWithReviews(owner, repo, from, to) {
-    const mergedPRs = await fetchMergedPRs(owner, repo, from, to);
+    // CHANGED: Call fetchPRs instead of fetchMergedPRs
+    const prs = await fetchPRs(owner, repo, from, to);
     const enriched = [];
 
-    for (const pr of mergedPRs) {
+    for (const pr of prs) {
         const reviews = await fetchReviews(owner, repo, pr.number);
         enriched.push({ ...pr, reviews });
     }
